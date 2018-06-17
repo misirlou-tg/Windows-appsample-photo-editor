@@ -1,5 +1,5 @@
 ﻿//  ---------------------------------------------------------------------------------
-//  Copyright (c) Microsoft Corporation.  All rights reserved.
+//  Copyright (c) Microsoft Corporation. All rights reserved.
 // 
 //  The MIT License (MIT)
 // 
@@ -25,6 +25,10 @@
 #pragma once
 #include "MainPage.g.h"
 
+extern winrt::Windows::Foundation::Collections::IVector<winrt::Windows::Foundation::IInspectable> g_photos;
+extern winrt::handle g_photosLoadedEventHandle;
+extern bool g_unsupportedFilesFound;
+
 namespace winrt::PhotoEditor::implementation
 {
     struct MainPage : MainPageT<MainPage>
@@ -34,31 +38,28 @@ namespace winrt::PhotoEditor::implementation
         // Retreives collection of Photo objects for thumbnail view.
         Windows::Foundation::Collections::IVector<Windows::Foundation::IInspectable> Photos() const
         {
-            return m_photos;
+            return g_photos;
         }
 
         // Event handlers for loading and rendering images.
-        Windows::Foundation::IAsyncAction OnNavigatedTo(Windows::UI::Xaml::Navigation::NavigationEventArgs);
-        Windows::Foundation::IAsyncAction OnContainerContentChanging(Windows::UI::Xaml::Controls::ListViewBase, Windows::UI::Xaml::Controls::ContainerContentChangingEventArgs);
+        winrt::Windows::Foundation::IAsyncAction OnNavigatedTo(Windows::UI::Xaml::Navigation::NavigationEventArgs);
+        void OnContainerContentChanging(Windows::UI::Xaml::Controls::ListViewBase const&, Windows::UI::Xaml::Controls::ContainerContentChangingEventArgs const&);
+        winrt::Windows::Foundation::IAsyncAction OnContainerContentChangingPhase1(Windows::UI::Xaml::Controls::ListViewBase, Windows::UI::Xaml::Controls::ContainerContentChangingEventArgs);
 
         // Animation for navigation back from DetailPage view.
-        Windows::Foundation::IAsyncAction StartConnectedAnimationForBackNavigation();
+        winrt::Windows::Foundation::IAsyncAction StartConnectedAnimationForBackNavigation();
 
         // Property changed notifications.
         event_token PropertyChanged(Windows::UI::Xaml::Data::PropertyChangedEventHandler const&);
         void PropertyChanged(event_token const&);
 
-		// Event handler.
-		void ImageGridView_ItemClick(Windows::Foundation::IInspectable const, Windows::UI::Xaml::Controls::ItemClickEventArgs const);
+        // Event handler.
+        void ImageGridView_ItemClick(Windows::Foundation::IInspectable const, Windows::UI::Xaml::Controls::ItemClickEventArgs const);
 
     private:
         // Functions for image loading and animation.
-        Windows::Foundation::IAsyncAction GetItemsAsync();
         Windows::UI::Composition::CompositionAnimationGroup CreateOffsetAnimation();
         Windows::Foundation::IAsyncOperation<PhotoEditor::Photo> LoadImageInfoAsync(Windows::Storage::StorageFile);
-
-        // Backing field for Photo collection.
-        Windows::Foundation::Collections::IVector<IInspectable> m_photos{ nullptr };
 
         // Field to store selected Photo for later back navigation.
         PhotoEditor::Photo m_persistedItem{ nullptr };
@@ -75,6 +76,8 @@ namespace winrt::PhotoEditor::implementation
         // Property changed notifications.
         void RaisePropertyChanged(hstring const&);
         event<Windows::UI::Xaml::Data::PropertyChangedEventHandler> m_propertyChanged;
+
+        bool m_OnNavigatedToAtLeastOnce{ false };
 
     };
 }

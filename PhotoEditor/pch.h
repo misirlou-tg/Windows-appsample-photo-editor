@@ -1,5 +1,5 @@
 ﻿//  ---------------------------------------------------------------------------------
-//  Copyright (c) Microsoft Corporation.  All rights reserved.
+//  Copyright (c) Microsoft Corporation. All rights reserved.
 // 
 //  The MIT License (MIT)
 // 
@@ -27,6 +27,8 @@
 // This is required because we are using std::min and std::max, otherwise 
 // we have a collision with min and max macros being defined elsewhere.
 #define NOMINMAX
+
+#include <windows.h>
 
 #include <winrt/Windows.ApplicationModel.h>
 #include <winrt/Windows.ApplicationModel.Activation.h>

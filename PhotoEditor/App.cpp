@@ -1,5 +1,5 @@
 ﻿//  ---------------------------------------------------------------------------------
-//  Copyright (c) Microsoft Corporation.  All rights reserved.
+//  Copyright (c) Microsoft Corporation. All rights reserved.
 // 
 //  The MIT License (MIT)
 // 
@@ -26,6 +26,8 @@
 
 #include "App.h"
 #include "MainPage.h"
+#include "ObservableVector.h"
+#include "Photo.h"
 
 using namespace winrt;
 using namespace Windows::ApplicationModel;
@@ -37,8 +39,14 @@ using namespace Windows::UI::Xaml::Navigation;
 using namespace PhotoEditor;
 using namespace PhotoEditor::implementation;
 
+using namespace Windows::Foundation;
+using namespace Windows::Foundation::Collections;
+using namespace Windows::Storage;
+using namespace Windows::Storage::Search;
+using namespace Windows::Storage::Streams;
+
 /// <summary>
-/// Initializes the singleton application object.  This is the first line of authored code
+/// Initializes the singleton application object. This is the first line of authored code
 /// executed, and as such is the logical equivalent of main() or WinMain().
 /// </summary>
 App::App()
@@ -56,14 +64,17 @@ App::App()
         }
     });
 #endif
+
+    g_photos = winrt::make<observable_vector<IInspectable>>();
+    winrt::check_bool(bool{ g_photosLoadedEventHandle = ::CreateEvent(nullptr, true, false, nullptr) });
 }
 
 /// <summary>
-/// Invoked when the application is launched normally by the end user.  Other entry points
+/// Invoked when the application is launched normally by the end user. Other entry points
 /// will be used such as when the application is launched to open a specific file.
 /// </summary>
 /// <param name="e">Details about the launch request and process.</param>
-void App::OnLaunched(LaunchActivatedEventArgs const& e)
+IAsyncAction App::OnLaunched(LaunchActivatedEventArgs const& e)
 {
     Frame rootFrame{ nullptr };
     auto content = Window::Current().Content();
@@ -118,10 +129,16 @@ void App::OnLaunched(LaunchActivatedEventArgs const& e)
             Window::Current().Activate();
         }
     }
+
+    // Load photos asynchronously.
+    co_await GetItemsAsync();
+
+    // Signal that the photos have now been loaded. The UI is waiting for this event to be signaled.
+    winrt::check_bool(::SetEvent(g_photosLoadedEventHandle.get()));
 }
 
 /// <summary>
-/// Invoked when application execution is being suspended.  Application state is saved
+/// Invoked when application execution is being suspended. Application state is saved
 /// without knowing whether the application will be terminated or resumed with the contents
 /// of memory still intact.
 /// </summary>
@@ -140,4 +157,38 @@ void App::OnSuspending([[maybe_unused]] IInspectable const& sender, [[maybe_unus
 void App::OnNavigationFailed(IInspectable const&, NavigationFailedEventArgs const& e)
 {
     throw hresult_error(E_FAIL, hstring(L"Failed to load Page ") + e.SourcePageType().Name);
+}
+
+// Loads images from the user's Pictures library.
+IAsyncAction App::GetItemsAsync()
+{
+    // File type filter.
+    QueryOptions options{};
+    options.FolderDepth(FolderDepth::Deep);
+    options.FileTypeFilter().Append(L".jpg");
+    options.FileTypeFilter().Append(L".png");
+    options.FileTypeFilter().Append(L".gif");
+
+    // Get the Pictures library.
+    StorageFolder picturesFolder = KnownFolders::PicturesLibrary();
+    auto result = picturesFolder.CreateFileQueryWithOptions(options);
+    auto imageFiles = co_await result.GetFilesAsync();
+
+    // Populate Photos collection.
+    for (StorageFile const& file : imageFiles)
+    {
+        // Only files on the local computer are supported. 
+        // Files on OneDrive or a network location are excluded.
+        if (file.Provider().Id() == L"computer")
+        {
+            auto properties = co_await file.Properties().GetImagePropertiesAsync();
+            auto image = winrt::make<Photo>(properties, file, file.DisplayName(), file.DisplayType());
+
+            g_photos.Append(image);
+        }
+        else
+        {
+            g_unsupportedFilesFound = true;
+        }
+    }
 }

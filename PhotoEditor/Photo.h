@@ -1,5 +1,5 @@
 ﻿//  ---------------------------------------------------------------------------------
-//  Copyright (c) Microsoft Corporation.  All rights reserved.
+//  Copyright (c) Microsoft Corporation. All rights reserved.
 // 
 //  The MIT License (MIT)
 // 
@@ -186,7 +186,7 @@ namespace winrt::PhotoEditor::implementation
         float m_sepiaIntensity{ .5f };
 
         // Size field for image tile size on MainPage.
-        double m_size{ 250 };
+        //double m_size{ 250 };
 
         // Property changed notification.
         event<Windows::UI::Xaml::Data::PropertyChangedEventHandler> m_propertyChanged;

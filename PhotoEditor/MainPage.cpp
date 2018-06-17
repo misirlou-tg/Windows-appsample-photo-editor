@@ -1,5 +1,5 @@
 ﻿//  ---------------------------------------------------------------------------------
-//  Copyright (c) Microsoft Corporation.  All rights reserved.
+//  Copyright (c) Microsoft Corporation. All rights reserved.
 // 
 //  The MIT License (MIT)
 // 
@@ -42,11 +42,14 @@ using namespace Windows::UI::Xaml::Hosting;
 using namespace Windows::UI::Xaml::Media::Animation;
 using namespace Windows::UI::Xaml::Media::Imaging;
 
+winrt::Windows::Foundation::Collections::IVector<winrt::Windows::Foundation::IInspectable> g_photos;
+winrt::handle g_photosLoadedEventHandle;
+bool g_unsupportedFilesFound{ false };
+
 namespace winrt::PhotoEditor::implementation
 {
     // Page constructor.
-    MainPage::MainPage() : m_photos(winrt::make<observable_vector<IInspectable>>()),
-        m_compositor(Window::Current().Compositor())
+    MainPage::MainPage() : m_compositor(Window::Current().Compositor())
     {
         InitializeComponent();
         ParaView().Source(ForegroundElement());
@@ -55,45 +58,73 @@ namespace winrt::PhotoEditor::implementation
     // Loads collection of Photos from users Pictures library.
     IAsyncAction MainPage::OnNavigatedTo(NavigationEventArgs e)
     {
-        // Load photos if they haven't previously been loaded.
-        if (Photos().Size() == 0)
+        // Only create animations, etc.,  once.
+        if (!m_OnNavigatedToAtLeastOnce)
         {
-			m_elementImplicitAnimation = m_compositor.CreateImplicitAnimationCollection();
+            m_OnNavigatedToAtLeastOnce = true;
+            m_elementImplicitAnimation = m_compositor.CreateImplicitAnimationCollection();
+            // Define trigger and animation that should play when the trigger is triggered. 
+            m_elementImplicitAnimation.Insert(L"Offset", CreateOffsetAnimation());
 
-			// Define trigger and animation that should play when the trigger is triggered. 
-			m_elementImplicitAnimation.Insert(L"Offset", CreateOffsetAnimation());
+            winrt::apartment_context ui_thread; // Capture the calling context (the main UI thread).
+            co_await winrt::resume_background(); // Return immediately, and resume on a background thread.
+            ::WaitForSingleObjectEx(g_photosLoadedEventHandle.get(), INFINITE, FALSE); // Wait for the photos to be loaded.
+            co_await ui_thread; // Switch back to the calling context.
 
-            co_await GetItemsAsync();
+            // Hide the loading progress bar.
+            LoadProgressIndicator().Visibility(Windows::UI::Xaml::Visibility::Collapsed);
+
+            if (g_photos.Size() == 0)
+            {
+                // No pictures were found in the library, so show message.
+                NoPicsText().Visibility(Windows::UI::Xaml::Visibility::Visible);
+            }
+
+            if (g_unsupportedFilesFound)
+            {
+                ContentDialog unsupportedFilesDialog{};
+                unsupportedFilesDialog.Title(box_value(L"Unsupported images found"));
+                unsupportedFilesDialog.Content(box_value(L"This sample app only supports images stored locally on the computer. We found files in your library that are stored in OneDrive or another network location. We didn't load those images."));
+                unsupportedFilesDialog.CloseButtonText(L"Ok");
+                co_await unsupportedFilesDialog.ShowAsync();
+            }
         }
     }
 
-    IAsyncAction MainPage::OnContainerContentChanging(ListViewBase sender, ContainerContentChangingEventArgs args)
+    void MainPage::OnContainerContentChanging(ListViewBase const& sender, ContainerContentChangingEventArgs const& args)
     {
-        auto elementVisual = ElementCompositionPreview::GetElementVisual(args.ItemContainer());
-		auto image = args.ItemContainer().ContentTemplateRoot().as<Image>();
-
         if (args.InRecycleQueue())
         {
+            auto elementVisual = ElementCompositionPreview::GetElementVisual(args.ItemContainer());
+            auto image = args.ItemContainer().ContentTemplateRoot().as<Image>();
             elementVisual.ImplicitAnimations(nullptr);
-
             image.Source(nullptr);
-        }
-
-        if (args.Phase() == 0)
-        {
-            //Add implicit animation to each visual.
-            elementVisual.ImplicitAnimations(m_elementImplicitAnimation);
-
-            args.RegisterUpdateCallback([&](auto sender, auto args)
-            {
-                OnContainerContentChanging(sender, args);
-            });
 
             args.Handled(true);
         }
 
+        if (args.Phase() == 0)
+        {
+            auto elementVisual = ElementCompositionPreview::GetElementVisual(args.ItemContainer());
+
+            //Add implicit animation to each visual.
+            elementVisual.ImplicitAnimations(m_elementImplicitAnimation);
+
+            args.RegisterUpdateCallback([this](auto sender, auto args)
+            {
+                OnContainerContentChangingPhase1(sender, args);
+            });
+
+            args.Handled(true);
+        }
+    }
+
+    winrt::Windows::Foundation::IAsyncAction MainPage::OnContainerContentChangingPhase1(Windows::UI::Xaml::Controls::ListViewBase /* sender */, Windows::UI::Xaml::Controls::ContainerContentChangingEventArgs args)
+    {
         if (args.Phase() == 1)
         {
+            auto image = args.ItemContainer().ContentTemplateRoot().as<Image>();
+
             // It's phase 1, so show this item's image.
             image.Opacity(100);
 
@@ -114,6 +145,8 @@ namespace winrt::PhotoEditor::implementation
                 bitmapImage.UriSource(uri);
                 image.Source(bitmapImage);
             }
+
+            args.Handled(true);
         }
     }
 
@@ -142,62 +175,6 @@ namespace winrt::PhotoEditor::implementation
     void MainPage::PropertyChanged(event_token const& token)
     {
         m_propertyChanged.remove(token);
-    }
-
-    // Loads images from the user's Pictures library.
-    IAsyncAction MainPage::GetItemsAsync()
-    {
-		// Show the loading progress bar.
-		LoadProgressIndicator().Visibility(Windows::UI::Xaml::Visibility::Visible);
-		NoPicsText().Visibility(Windows::UI::Xaml::Visibility::Collapsed);
-
-        // File type filter.
-        QueryOptions options{};
-        options.FolderDepth(FolderDepth::Deep);
-        options.FileTypeFilter().Append(L".jpg");
-        options.FileTypeFilter().Append(L".png");
-        options.FileTypeFilter().Append(L".gif");
-
-        // Get the Pictures library.
-        StorageFolder picturesFolder = KnownFolders::PicturesLibrary();
-        auto result = picturesFolder.CreateFileQueryWithOptions(options);
-        auto imageFiles = co_await result.GetFilesAsync();
-        auto unsupportedFilesFound = false;
-
-        // Populate Photos collection.
-        for (auto&& file : imageFiles)
-        {
-            // Only files on the local computer are supported. 
-            // Files on OneDrive or a network location are excluded.
-            if (file.Provider().Id() == L"computer")
-            {
-                auto image = co_await LoadImageInfoAsync(file);
-                Photos().Append(image);
-            }
-            else
-            {
-                unsupportedFilesFound = true;
-            }
-        }
-
-		if (Photos().Size() == 0)
-		{
-			// No pictures were found in the library, so show message.
-			NoPicsText().Visibility(Windows::UI::Xaml::Visibility::Visible);
-		}
-
-		// Hide the loading progress bar.
-		LoadProgressIndicator().Visibility(Windows::UI::Xaml::Visibility::Collapsed);
-
-        if (unsupportedFilesFound)
-        {
-            ContentDialog unsupportedFilesDialog{};
-            unsupportedFilesDialog.Title(box_value(L"Unsupported images found"));
-            unsupportedFilesDialog.Content(box_value(L"This sample app only supports images stored locally on the computer. We found files in your library that are stored in OneDrive or another network location. We didn't load those images."));
-            unsupportedFilesDialog.CloseButtonText(L"Ok");
-
-            co_await unsupportedFilesDialog.ShowAsync();
-        }
     }
 
     // Creates a Photo from Storage file for adding to Photo collection.
